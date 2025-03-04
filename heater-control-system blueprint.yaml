@@ -1,6 +1,6 @@
 blueprint:
   name: Heater Control System
-  description: "Automatically controls a heater based on time (peak/off-peak) and temperature thresholds with hysteresis."
+  description: "Automatically controls a heater based on time periods with fixed 30°C target temperature."
   domain: automation
   input:
     heater_switch:
@@ -9,18 +9,6 @@ blueprint:
       selector:
         entity:
           domain: input_boolean
-    temp_on_peak:
-      name: On-Peak Temperature Setpoint
-      description: "Input number for temperature threshold during on-peak hours."
-      selector:
-        entity:
-          domain: input_number
-    temp_off_peak:
-      name: Off-Peak Temperature Setpoint
-      description: "Input number for temperature threshold during off-peak hours."
-      selector:
-        entity:
-          domain: input_number
     temp_sensor:
       name: Temperature Sensor
       description: "Sensor to monitor current temperature."
@@ -36,7 +24,7 @@ blueprint:
           domain: climate
     precision_factor:
       name: Precision Factor
-      description: "Input number for temperature hysteresis range."
+      description: "Input number for temperature hysteresis range (±°C)."
       selector:
         entity:
           domain: input_number
@@ -52,18 +40,6 @@ blueprint:
       selector:
         entity:
           domain: input_datetime
-    heater_temp:
-      name: Heater Target Temperature
-      description: "Input number for heater temperature setpoint."
-      selector:
-        entity:
-          domain: input_number
-    heater_temp_off_peak:
-      name: Off-Peak Heater Temperature
-      description: "Input number for off-peak heater temperature setpoint."
-      selector:
-        entity:
-          domain: input_number
 
 trigger:
   - platform: time
@@ -73,8 +49,6 @@ trigger:
   - platform: state
     entity_id:
       - input.heater_switch
-      - input.temp_on_peak
-      - input.temp_off_peak
       - input.temp_sensor
   - platform: homeassistant
     event: start
@@ -91,14 +65,13 @@ action:
           - condition: template
             value_template: >
               {% set current_temp = states(input.temp_sensor) | float %}
-              {% set setpoint_on = states(input.heater_temp) | float %}
-              {{ current_temp > setpoint_on or current_temp < (setpoint_on - states(input.precision_factor) | float) }}
+              {{ current_temp > 30 or current_temp < (30 - states(input.precision_factor) | float) }}
         sequence:
           - choose:
               - conditions:
                   - condition: template
                     value_template: >
-                      {{ states(input.temp_sensor) | float > states(input.heater_temp) | float 
+                      {{ states(input.temp_sensor) | float > 30 
                       and is_state(input.heater_device, 'on') }}
                 sequence:
                   - service: climate.turn_off
@@ -107,7 +80,7 @@ action:
               - conditions:
                   - condition: template
                     value_template: >
-                      {{ states(input.temp_sensor) | float < (states(input.heater_temp) | float - states(input.precision_factor) | float)
+                      {{ states(input.temp_sensor) | float < (30 - states(input.precision_factor) | float)
                       and is_state(input.heater_device, 'off') }}
                 sequence:
                   - service: climate.turn_on
@@ -129,14 +102,14 @@ action:
               or current_time > state_attr(input.off_peak_time, 'timestamp') | timestamp_custom('%H:%M:%S') }}
           - condition: template
             value_template: >
-              {{ states(input.temp_sensor) | float > states(input.heater_temp_off_peak) | float 
-              or states(input.temp_sensor) | float < (states(input.heater_temp_off_peak) | float - states(input.precision_factor) | float) }}
+              {{ states(input.temp_sensor) | float > 30 
+              or states(input.temp_sensor) | float < (30 - states(input.precision_factor) | float) }}
         sequence:
           - choose:
               - conditions:
                   - condition: template
                     value_template: >
-                      {{ states(input.temp_sensor) | float > states(input.heater_temp_off_peak) | float 
+                      {{ states(input.temp_sensor) | float > 30 
                       and is_state(input.heater_device, 'on') }}
                 sequence:
                   - service: climate.turn_off
@@ -145,7 +118,7 @@ action:
               - conditions:
                   - condition: template
                     value_template: >
-                      {{ states(input.temp_sensor) | float < (states(input.heater_temp_off_peak) | float - states(input.precision_factor) | float)
+                      {{ states(input.temp_sensor) | float < (30 - states(input.precision_factor) | float)
                       and is_state(input.heater_device, 'off') }}
                 sequence:
                   - service: climate.turn_on
