@@ -1,0 +1,109 @@
+blueprint:
+  name: Heater Control System
+  description: >
+    This blueprint controls a heater based on room temperature,
+    on peak/off peak times and temperatures, a master toggle, and a precision factor for hysteresis.
+  domain: automation
+  input:
+    temp_sensor:
+      name: Room Temperature Sensor
+      description: The sensor that provides the room temperature.
+      selector:
+        entity:
+          domain: sensor
+    heater:
+      name: Heater Entity
+      description: The heater to control (should support climate services).
+      selector:
+        entity:
+          domain: climate
+    on_peak_time:
+      name: On Peak Time
+      description: The start time for on peak period (HH:MM:SS format).
+      selector:
+        entity:
+          domain: input_datetime
+    off_peak_time:
+      name: Off Peak Time
+      description: The end time for on peak period (HH:MM:SS format).
+      selector:
+        entity:
+          domain: input_datetime
+    on_peak_temp:
+      name: On Peak Temperature Setpoint
+      description: Temperature setpoint during on peak time.
+      selector:
+        entity:
+          domain: input_number
+    off_peak_temp:
+      name: Off Peak Temperature Setpoint
+      description: Temperature setpoint during off peak time.
+      selector:
+        entity:
+          domain: input_number
+    master_toggle:
+      name: Master Toggle
+      description: When off, the heater is forced off.
+      selector:
+        entity:
+          domain: input_boolean
+    precision_factor:
+      name: Precision Factor
+      description: >
+        The hysteresis factor. The heater turns on when the room temperature
+        is below (setpoint - precision) and turns off when above (setpoint + precision).
+      selector:
+        entity:
+          domain: input_number
+  trigger:
+    - platform: state
+      entity_id: !input temp_sensor
+    - platform: time_pattern
+      minutes: "/1"
+  condition: []
+  action:
+    - variables:
+        current_time: "{{ now().strftime('%H:%M:%S') }}"
+        on_peak: "{{ states(on_peak_time) }}"
+        off_peak: "{{ states(off_peak_time) }}"
+        master: "{{ is_state(master_toggle, 'on') }}"
+        precision: "{{ states(precision_factor) | float }}"
+        on_peak_setpoint: "{{ states(on_peak_temp) | float }}"
+        off_peak_setpoint: "{{ states(off_peak_temp) | float }}"
+        room_temp: "{{ states(temp_sensor) | float }}"
+        is_on_peak: >
+          {% set on_time = on_peak %}
+          {% set off_time = off_peak %}
+          {% set now_time = current_time %}
+          {% if on_time < off_time %}
+            {{ on_time <= now_time <= off_time }}
+          {% else %}
+            {{ now_time >= on_time or now_time <= off_time }}
+          {% endif %}
+        setpoint: >
+          {% if is_on_peak %}
+            {{ on_peak_setpoint }}
+          {% else %}
+            {{ off_peak_setpoint }}
+          {% endif %}
+    - choose:
+        - conditions: "{{ not master }}"
+          sequence:
+            - service: climate.turn_off
+              target:
+                entity_id: !input heater
+        - conditions: []
+          sequence:
+            - choose:
+                - conditions: "{{ room_temp < setpoint - precision }}"
+                  sequence:
+                    - service: climate.set_hvac_mode
+                      target:
+                        entity_id: !input heater
+                      data:
+                        hvac_mode: heat
+                - conditions: "{{ room_temp > setpoint + precision }}"
+                  sequence:
+                    - service: climate.turn_off
+                      target:
+                        entity_id: !input heater
