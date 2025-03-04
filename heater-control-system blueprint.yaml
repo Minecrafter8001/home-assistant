@@ -1,91 +1,116 @@
-blueprint:
-  name: Heater Control System
-  description: Controls heater based on temperature, time periods, and hysteresis.
-  domain: automation
-  input:
-    temp_sensor:
-      name: Temperature Sensor
-      selector:
-        entity:
-          domain: sensor
-    heater:
-      name: Heater Entity
-      selector:
-        entity:
-          domain: climate
-    on_peak_time:
-      name: On Peak Start Time
-      selector:
-        entity:
-          domain: input_datetime
-    off_peak_time:
-      name: Off Peak Start Time
-      selector:
-        entity:
-          domain: input_datetime
-    on_peak_temp:
-      name: On Peak Temp
-      selector:
-        entity:
-          domain: input_number
-    off_peak_temp:
-      name: Off Peak Temp
-      selector:
-        entity:
-          domain: input_number
-    master_toggle:
-      name: Master Toggle
-      selector:
-        entity:
-          domain: input_boolean
-    precision_factor:
-      name: Precision Factor
-      selector:
-        entity:
-          domain: input_number
-
+alias: heater control system
+variables:
+  heater_switch: input_boolean.heater_on_off
+  temp_on_peak: input_number.temp_on_peak
+  temp_off_peak: input_number.temp_off_peak
+  temp_sensor: sensor.temp_sensor_temperature
+  heater_device: climate.smart_convector_heater
+  precision_factor: input_number.precision_factor
+  on_peak_time: input_datetime.on_peak_time
+  off_peak_time: input_datetime.off_peak_time
+  heater_temp: input_number.heater_temp
+  heater_temp_off_peak: input_number.heater_temp_off_peak
 trigger:
+  - platform: time
+    at: "{{ states(on_peak_time) }}"
+  - platform: time
+    at: "{{ states(off_peak_time) }}"
   - platform: state
-    entity_id: !input temp_sensor
-  - platform: time_pattern
-    minutes: "/1"
-
+    entity_id:
+      - "{{ heater_switch }}"
+      - "{{ temp_on_peak }}"
+      - "{{ temp_off_peak }}"
+      - "{{ temp_sensor }}"
+  - platform: homeassistant
+    event: start
 condition: []
-
 action:
-  - variables:
-      current_time: "{{ now().strftime('%H:%M:%S') }}"
-      on_peak: "{{ state_attr(input.on_peak_time, 'timestamp') | int | timestamp_custom('%H:%M:%S') }}"
-      off_peak: "{{ state_attr(input.off_peak_time, 'timestamp') | int | timestamp_custom('%H:%M:%S') }}"
-      master: "{{ is_state(input.master_toggle, 'on') }}"
-      precision: "{{ states(input.precision_factor) | float }}"
-      on_peak_setpoint: "{{ states(input.on_peak_temp) | float }}"
-      off_peak_setpoint: "{{ states(input.off_peak_temp) | float }}"
-      room_temp: "{{ states(input.temp_sensor) | float }}"
-      is_on_peak: >
-        {% set on_time = on_peak %}
-        {% set off_time = off_peak %}
-        {% set now_time = current_time %}
-        {{ (on_time <= now_time <= off_time) if on_time < off_time else (now_time >= on_time or now_time <= off_time) }}
-      setpoint: "{{ on_peak_setpoint if is_on_peak else off_peak_setpoint }}"
-      
   - choose:
-      - conditions: "{{ not master }}"
+      - conditions:
+          - condition: state
+            entity_id: "{{ heater_switch }}"
+            state: "on"
+          - condition: time
+            after: "{{ states(on_peak_time) }}"
+            before: "{{ states(off_peak_time) }}"
+          - condition: template
+            value_template: >
+              {% set current_temp = states(temp_sensor) | float %}
+              {% set setpoint_on = states(heater_temp) | float %}
+              {{ current_temp > setpoint_on or current_temp < (setpoint_on - states(precision_factor) | float) }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set current_temp = states(temp_sensor) | float %}
+                      {% set setpoint_on = states(heater_temp) | float %}
+                      {{ current_temp > setpoint_on and is_state(heater_device, 'on') }}
+                sequence:
+                  - service: climate.turn_off
+                    data:
+                      entity_id: "{{ heater_device }}"
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set current_temp = states(temp_sensor) | float %}
+                      {% set setpoint_on = states(heater_temp) | float %}
+                      {{ current_temp < (setpoint_on - states(precision_factor) | float) and is_state(heater_device, 'off') }}
+                sequence:
+                  - service: climate.turn_on
+                    data:
+                      entity_id: "{{ heater_device }}"
+                  - service: climate.set_temperature
+                    data:
+                      entity_id: "{{ heater_device }}"
+                      temperature: 30
+      - conditions:
+          - condition: state
+            entity_id: "{{ heater_switch }}"
+            state: "on"
+          - condition: template
+            value_template: >
+              {% set current_time = now().strftime('%H:%M:%S') %}
+              {% set on_time = states(on_peak_time) %}
+              {% set off_time = states(off_peak_time) %}
+              {{ current_time < on_time or current_time > off_time }}
+          - condition: template
+            value_template: >
+              {% set current_temp = states(temp_sensor) | float %}
+              {% set setpoint_off = states(heater_temp_off_peak) | float %}
+              {{ current_temp > setpoint_off or current_temp < (setpoint_off - states(precision_factor) | float) }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set current_temp = states(temp_sensor) | float %}
+                      {% set setpoint_off = states(heater_temp_off_peak) | float %}
+                      {{ current_temp > setpoint_off and is_state(heater_device, 'on') }}
+                sequence:
+                  - service: climate.turn_off
+                    data:
+                      entity_id: "{{ heater_device }}"
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {% set current_temp = states(temp_sensor) | float %}
+                      {% set setpoint_off = states(heater_temp_off_peak) | float %}
+                      {{ current_temp < (setpoint_off - states(precision_factor) | float) and is_state(heater_device, 'off') }}
+                sequence:
+                  - service: climate.turn_on
+                    data:
+                      entity_id: "{{ heater_device }}"
+                  - service: climate.set_temperature
+                    data:
+                      entity_id: "{{ heater_device }}"
+                      temperature: 30
+      - conditions:
+          - condition: state
+            entity_id: "{{ heater_switch }}"
+            state: "off"
         sequence:
           - service: climate.turn_off
-            target:
-              entity_id: !input heater
-      - conditions:
-          - "{{ room_temp < (setpoint - precision) }}"
-        sequence:
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input heater
             data:
-              hvac_mode: heat
-      - conditions:
-          - "{{ room_temp > (setpoint + precision) }}"
-        sequence:
-          - service: climate.turn_off
-            target:
-              entity_id: !input heater
+              entity_id: "{{ heater_device }}"
+mode: single
